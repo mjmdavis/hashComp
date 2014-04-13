@@ -61,7 +61,7 @@ def generateStringDict(length=1, keepScoresFrom=86, sendToDB=True):
 
     return ddict
 
-def fgenerateStringDict(length=1, keepScoresFrom=93):
+def fgenerateStrings(length=1, keepScoresFrom=90):
     for sTup in itertools.product(string.printable, repeat=length):
         s = ''.join(sTup)
         if scoreString(str(s)) >= keepScoresFrom:

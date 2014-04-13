@@ -27,7 +27,10 @@ def getTargetHash():
     return _targetHash
 
 def scoreString(s):
-    return 128 - bitdiff(hashString(s), getTargetHash())
+    return scoreHash(hashString(s))
+
+def scoreHash(h):
+    return 128 - bitdiff(h, getTargetHash())
 
 def getDifficulty():
     r = requests.get('http://novena-puzzle.crowdsupply.com/difficulty')
@@ -47,23 +50,22 @@ def pOfFindingString(diff=getDifficulty(), tries=None):
         pWin = 1- pow(1 - pOfFindingString().evalf(), tries)
     return pWin
 
-#def timeToFindString(diff=getDifficulty(), triesPerSec=1.0):
-
-def generateStringDict(length=1, keepScoresFrom=85):
+def generateStringDict(length=1, keepScoresFrom=86, sendToDB=True):
     ddict = collections.defaultdict(set)
     for sTup in itertools.product(string.printable, repeat=length):
         s = ''.join(sTup)
         if scoreString(str(s)) >= keepScoresFrom:
             ddict[scoreString(str(s))].add(s)
+            if sendToDB:
+                saveString(s)
+
     return ddict
 
-def fgenerateStringDict(length=1):
-    ddict = collections.defaultdict(set)
+def fgenerateStringDict(length=1, keepScoresFrom=93):
     for sTup in itertools.product(string.printable, repeat=length):
         s = ''.join(sTup)
-        if scoreString(str(s)) > 80:
-            ddict[scoreString(str(s))].add(s)
-    return ddict
+        if scoreString(str(s)) >= keepScoresFrom:
+            saveString(s)
 
 def submitString(string):
     data = {'username': 'pingbat', 'contents': string}
@@ -77,14 +79,30 @@ def getDB():
         _dbConnection = redis.Redis()
     return _dbConnection
 
-def saveString(string, score=None, foundby='unknown', foundtime=time.time()):
-    if None==score:
-        score = scoreString(string)
-    pipe = getDB().pipeline()
-    vals = {'score': score,
-            'foundby': foundby,
-            'foundtime': foundtime
+def saveHash(md5Hash, string=None, score=None, pipe=None):
+    _pipe = pipe if pipe else getDB().pipeline()
+    if not score:
+        score = scoreHash(md5hash)
+    stringHash = md5Hash.tobytes()
+    vals = {'string': string,
+            'score': score,
             }
-    pipe.hmset('string:%s' % string, vals)
-    pipe.sadd('score:%i' % score, string)
-    return pipe.execute()
+    _pipe.hmset('hash:%s' % stringHash, vals)
+    _pipe.sadd('hashScore:%i' % score, stringHash)
+    if not pipe:
+        return _pipe.execute()
+
+def saveString(string, score=None, foundby='unknown', foundtime=time.time(), pipe=None):
+    _pipe = pipe if pipe else getDB().pipeline()
+    if not score:
+        score = scoreString(string)
+    vals = {'score': score,
+            'foundBy': foundby,
+            }
+    _pipe.hmset('string:%s' % string, vals)
+    _pipe.hsetnx('string:%s' % string, 'foundTime', foundtime)
+    _pipe.sadd('stringScore:%i' % score, string)
+    saveHash(hashString(string), string=string, score=score, pipe=pipe)
+    if not pipe:
+        return _pipe.execute()
+

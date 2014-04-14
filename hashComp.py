@@ -90,13 +90,15 @@ def submitString(string):
     else:
         if resp['reason'] == u'already submitted':
             getDB().sadd('sumbittedStrings', string)
-        getDB().rpush('failedAttempts', str(resp))
+        getDB().rpush('failedAttempts', string + str(resp))
+        getDB().sadd('failedStrings', string)
     return resp
 
 def watchdog():
     r = getDB()
     while(True):
         diff = getDifficulty()
+        print(str(time.time()) + ': ' +  str(diff))
         knownS = list(sorted(r.keys('stringScore:*'), cmp=lambda x,y: cmp(int(x.split(':')[1]),int(y.split(':')[1]))))
         goodS = filter(lambda x: int(x.split(':')[1])>=diff, knownS)
         status='success'

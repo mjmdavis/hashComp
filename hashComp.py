@@ -10,6 +10,7 @@ import time
 import sympy as sp
 from sympy import S
 from sympy import stats
+import json
 
 def hashString(s):
     hs = hashlib.md5(s).digest()
@@ -26,6 +27,13 @@ def getTargetHash():
         _targetHash = hashString(_targetString)
     return _targetHash
 
+_dbConnection = None
+def getDB():
+    global _dbConnection
+    if _dbConnection == None:
+        _dbConnection = redis.Redis()
+    return _dbConnection
+
 def scoreString(s):
     return scoreHash(hashString(s))
 
@@ -35,6 +43,8 @@ def scoreHash(h):
 def getDifficulty():
     r = requests.get('http://novena-puzzle.crowdsupply.com/difficulty')
     d = r.json()['difficulty']
+    db = getDB()
+    db.rpush('difficultyTime', '%i:%s'%(d, str(time.time())))
     return d
 
 _binom128 = None
@@ -58,8 +68,10 @@ def generateStringDict(length=1, keepScoresFrom=86, sendToDB=True):
             ddict[scoreString(str(s))].add(s)
             if sendToDB:
                 saveString(s)
-
     return ddict
+
+def hexHash(binHash):
+    return "".join("{:02x}".format(ord(c)) for c in binHash.tobytes())
 
 def fgenerateStrings(length=1, keepScoresFrom=90):
     for sTup in itertools.product(string.printable, repeat=length):
@@ -70,14 +82,36 @@ def fgenerateStrings(length=1, keepScoresFrom=90):
 def submitString(string):
     data = {'username': 'pingbat', 'contents': string}
     headers = {'Content-type': 'application/json', 'Accept': 'text/plain'}
-    r = requests.post(url, data=json.dumps(data), headers=headers)
+    r = requests.post('http://novena-puzzle.crowdsupply.com/submit', data=json.dumps(data))
+    resp = json.loads(r.text)
+    if resp['status'] == 'success':
+        getDB().sadd('sumbittedStrings', string)
+        getDB().rpush('successfulAttempts', str(resp))
+    else:
+        if resp['reason'] == u'already submitted':
+            getDB().sadd('sumbittedStrings', string)
+        getDB().rpush('failedAttempts', str(resp))
+    return resp
 
-_dbConnection = None
-def getDB():
-    global _dbConnection
-    if _dbConnection == None:
-        _dbConnection = redis.Redis()
-    return _dbConnection
+def watchdog():
+    r = getDB()
+    while(True):
+        diff = getDifficulty()
+        knownS = list(sorted(r.keys('stringScore:*'), cmp=lambda x,y: cmp(int(x.split(':')[1]),int(y.split(':')[1]))))
+        goodS = filter(lambda x: int(x.split(':')[1])>=diff, knownS)
+        status='success'
+        try:
+            for scoreS in goodS:
+                cands = r.sdiff(scoreS, 'sumbittedStrings')
+                for cand in cands:
+                    print 'submitting string: %s' % cand
+                    resp = submitString(cand)
+                    assert resp['status']=='success'
+        except AssertionError:
+            print 'crap, assertion error'
+        time.sleep(30)
+
+
 
 def saveHash(md5Hash, string=None, score=None, pipe=None):
     _pipe = pipe if pipe else getDB().pipeline()
